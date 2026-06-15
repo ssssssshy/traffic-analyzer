@@ -1,8 +1,8 @@
 import cv2
 import torch
 from ultralytics import YOLO
-from config import MODEL_PATH, LINE_POSITION_COEFF
-from database import log_pedestrian, init_db
+from config import MODEL_PATH
+from database import log_pedestrian, init_db, get_line_position
 
 
 def run_analytics(video_source: str | int = 0):
@@ -26,13 +26,6 @@ def run_analytics(video_source: str | int = 0):
         print(f"Ошибка: Не удалось открыть источник видео {video_source}")
         return
 
-    # Получаем размеры кадра для отрисовки линии
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-    # Вычисляем координату Y для нашей виртуальной линии
-    line_y = int(height * LINE_POSITION_COEFF)
-
     # Словари для отслеживания истории перемещения (чтобы понять направление)
     track_history = {}
     # Множество ID, которые мы уже посчитали (чтобы не дублировать)
@@ -46,7 +39,14 @@ def run_analytics(video_source: str | int = 0):
             print("Видеопоток завершен или потеряно соединение.")
             break
 
-        # Запускаем YOLO с трекером ByteTrack
+        # Динамически запрашиваем коэффициент из БД (измененный в Streamlit)
+        dynamic_coeff = get_line_position()
+
+        # Берем реальное разрешение текущего кадра
+        height, width = frame.shape[:2]
+        line_y = int(height * dynamic_coeff)
+
+        # Возвращаем запуск трекера YOLOv8, который потерялся при копировании
         results = model.track(
             frame, persist=True, tracker="bytetrack.yaml", classes=[0], verbose=False
         )
@@ -57,7 +57,7 @@ def run_analytics(video_source: str | int = 0):
 
             # Явная проверка для Pylance, что объект boxes и его id не равны None
             if boxes_object is not None and boxes_object.id is not None:
-                # Используем # type: ignore, чтобы линтер не гадал, какие методы есть у внутренних объектов Ultralytics
+                # Используем # type: ignore, чтобы линтер не ругался на динамические методы Ultralytics
                 boxes = boxes_object.xyxy.cpu().numpy()  # type: ignore
                 track_ids = boxes_object.id.cpu().numpy().astype(int)  # type: ignore
 
@@ -106,16 +106,17 @@ def run_analytics(video_source: str | int = 0):
                     # Обновляем историю позиции для этого ID
                     track_history[track_id] = cy
 
-        # Рисуем виртуальную линию (красная)
-        cv2.line(frame, (0, line_y), (width, line_y), (0, 0, 255), 3)
+        # Рисуем виртуальную линию (сделали чуть аккуратнее — толщина 2, сглаживание LINE_AA)
+        cv2.line(frame, (0, line_y), (width, line_y), (0, 0, 255), 2)
         cv2.putText(
             frame,
-            "LINIYA PODSCHETA",
-            (20, line_y - 10),
+            "Liniya podscheta",
+            (50, line_y - 10),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
+            0.5,
             (0, 0, 255),
-            2,
+            1,
+            cv2.LINE_AA,
         )
 
         # Выводим текущее количество уникальных прохожих на экран
@@ -124,9 +125,10 @@ def run_analytics(video_source: str | int = 0):
             f"Vsego v baze: {len(counted_ids)}",
             (20, 40),
             cv2.FONT_HERSHEY_SIMPLEX,
-            1,
+            0.7,
             (0, 255, 0),
             2,
+            cv2.LINE_AA,
         )
 
         # Показываем кадр
@@ -141,4 +143,5 @@ def run_analytics(video_source: str | int = 0):
 
 
 if __name__ == "__main__":
+    # Если на камере Gnome/Wayland зависает, замените 0 на "data/test.mp4"
     run_analytics(0)

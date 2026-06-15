@@ -2,35 +2,59 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 import plotly.express as px
+from database import get_line_position, update_line_position
 from config import DB_PATH
 
 # Настройка страницы Streamlit
-st.set_page_config(page_title=" Shawarma Traffic Analytics", layout="wide")
+st.set_page_config(page_title="Shawarma Traffic Analytics", layout="wide")
 
 st.title("📊 Аналитика пешеходного трафика для точки")
 st.markdown(
     "Данные собираются автоматически с помощью компьютерного зрения (YOLOv8 + ByteTrack)"
 )
 
+# --- БОКОВАЯ ПАНЕЛЬ НАСТРОЕК ---
+st.sidebar.header("⚙️ Настройки камеры")
 
-def load_data():
+# Читаем текущее значение из БД для инициализации ползунка
+current_line_pos = get_line_position()
+
+# Ползунок от 0.1 (верх кадра) до 0.9 (низ кадра)
+new_line_pos = st.sidebar.slider(
+    "Положение линии подсчета (высота %)",
+    min_value=0.1,
+    max_value=0.9,
+    value=float(current_line_pos),
+    step=0.05,
+    help="0.5 — ровно посередине экрана. Чем больше значение, тем ниже опускается линия.",
+)
+
+# Если пользователь подвинул ползунок — сохраняем в БД и жестко обновляем интерфейс
+if new_line_pos != current_line_pos:
+    update_line_position(new_line_pos)
+    st.sidebar.success(f"Линия сдвинута на {int(new_line_pos * 100)}%")
+    st.rerun()  # Перезапускает интерфейс, чтобы весь проект синхронизировался
+
+
+def load_data_from_db():
     """Загрузка сырых данных из БД и превращение в DataFrame."""
     try:
         conn = sqlite3.connect(DB_PATH)
         query = "SELECT timestamp, track_id, direction FROM traffic"
-        df = pd.read_sql_query(query, conn)
+        df_raw = pd.read_sql_query(query, conn)
         conn.close()
 
-        if not df.empty:
+        if not df_raw.empty:
             # Приводим к типу datetime для удобной группировки
-            df["timestamp"] = pd.to_datetime(df["timestamp"])
-        return df
+            df_raw["timestamp"] = pd.to_datetime(df_raw["timestamp"])
+        return df_raw
     except Exception as e:
         st.error(f"Ошибка подключения к базе данных: {e}")
         return pd.DataFrame()
 
 
-df = load_data()
+# Загружаем актуальные данные
+df = load_data_from_db()
 
 if df.empty:
     st.info(
@@ -57,7 +81,6 @@ else:
     st.markdown("---")
 
     # --- ПОДГОТОВКА ДАННЫХ ДЛЯ ГРАФИКОВ ---
-    # Создаем колонки для часа и дня недели
     df["Hour"] = df["timestamp"].dt.hour
     df["Date"] = df["timestamp"].dt.date
 
