@@ -7,7 +7,7 @@ from ultralytics import YOLO
 from database import log_pedestrian, init_db, get_setting
 
 
-def run_analytics(video_source: Union[str, int] = "data/IMG_1686.MOV"):
+def run_analytics(video_source: Union[str, int] = "data/IMG_1687.MOV"):
     init_db()
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -167,4 +167,4 @@ def run_analytics(video_source: Union[str, int] = "data/IMG_1686.MOV"):
 
 
 if __name__ == "__main__":
-    run_analytics("data/IMG_1686.MOV")
+    run_analytics("data/IMG_1687.MOV")
