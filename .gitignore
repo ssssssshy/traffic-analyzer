@@ -1,10 +1,33 @@
-# Python-generated files
+# Виртуальное окружение (uv / venv)
+.venv/
+venv/
+ENV/
+*.pyc
 __pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 
-# Virtual environments
-.venv
+# Веса нейросетей (файлы моделей YOLO)
+*.pt
+*.onnx
+*.engine
+weight/
+
+# Локальные базы данных и логи (чтобы не затирать чужие данные)
+*.db
+*.db-journal
+*.sqlite3
+data/traffic_logs.db
+
+# Видео-материалы (тяжелые файлы из папки data)
+data/*.MOV
+data/*.mov
+data/*.mp4
+data/*.avi
+
+# Настройки среды и IDE
+.vscode/
+.idea/
+.DS_Store
+*.env
