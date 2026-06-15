@@ -2,7 +2,10 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 import plotly.express as px
-from database import get_line_position, update_line_position
+import cv2
+import numpy as np
+import math
+from database import get_setting, update_setting
 from config import DB_PATH
 
 # Настройка страницы Streamlit
@@ -13,39 +16,155 @@ st.markdown(
     "Данные собираются автоматически с помощью компьютерного зрения (YOLOv8 + ByteTrack)"
 )
 
-# --- БОКОВАЯ ПАНЕЛЬ НАСТРОЕК ---
-st.sidebar.header("⚙️ Настройки камеры")
 
-# Читаем текущее значение из БД для инициализации ползунка
-current_line_pos = get_line_position()
+# --- ФУНКЦИИ ОБРАТНОГО ВЫЗОВА (CALLBACKS) ---
+def on_setting_change(key_name: str):
+    """Мгновенно сохраняет измененный ползунок в БД."""
+    update_setting(key_name, st.session_state[key_name])
 
-# Ползунок от 0.1 (верх кадра) до 0.9 (низ кадра)
-new_line_pos = st.sidebar.slider(
-    "Положение линии подсчета (высота %)",
+
+# --- БОКОВАЯ ПАНЕЛЬ НАСТРОЕК ПРОСТРАНСТВА ---
+st.sidebar.header("⚙️ Пространственные настройки (Транзит)")
+
+current_pos_x = get_setting("line_position_x", 0.5)
+current_width = get_setting("line_width", 0.15)
+current_angle = get_setting("line_angle_v", 0.0)
+
+# 1. Сдвиг по горизонтали
+st.sidebar.slider(
+    "1️⃣ Смещение зоны по горизонтали (%)",
     min_value=0.1,
     max_value=0.9,
-    value=float(current_line_pos),
-    step=0.05,
-    help="0.5 — ровно посередине экрана. Чем больше значение, тем ниже опускается линия.",
+    value=float(current_pos_x),
+    step=0.02,  # Сделали шаг меньше для плавной настройки
+    key="line_position_x",
+    on_change=on_setting_change,
+    args=("line_position_x",),
 )
 
-# Если пользователь подвинул ползунок — сохраняем в БД и жестко обновляем интерфейс
-if new_line_pos != current_line_pos:
-    update_line_position(new_line_pos)
-    st.sidebar.success(f"Линия сдвинута на {int(new_line_pos * 100)}%")
-    st.rerun()  # Перезапускает интерфейс, чтобы весь проект синхронизировался
+# 2. Ширина коридора
+st.sidebar.slider(
+    "2️⃣ Ширина коридора детекции",
+    min_value=0.02,
+    max_value=0.40,
+    value=float(current_width),
+    step=0.01,
+    key="line_width",
+    on_change=on_setting_change,
+    args=("line_width",),
+)
+
+# 3. Наклон вертикальной оси
+st.sidebar.slider(
+    "3️⃣ Наклон вертикальных линий (градусы)",
+    min_value=-30.0,
+    max_value=30.0,
+    value=float(current_angle),
+    step=1.0,
+    key="line_angle_v",
+    on_change=on_setting_change,
+    args=("line_angle_v",),
+)
 
 
+# --- ВЕРХНЯЯ ЗОНА: ИНТЕРАКТИВНЫЙ ОТЛАДЧИК ЛИНИИ ---
+st.subheader("👁️ Настройка геометрии кадра в реальном времени")
+
+
+@st.cache_data(show_spinner=False)
+def get_preview_frame(video_path="IMG_1686.MOV"):
+    """Загружает ровно один первый кадр видео для превью, чтобы не нагружать память."""
+    cap = cv2.VideoCapture(video_path)
+    success, frame = cap.read()
+    cap.release()
+    if success:
+        return frame
+    return None
+
+
+# Берем кадр из вашего видео
+preview_frame = get_preview_frame()
+
+if preview_frame is not None:
+    # Копируем кадр, чтобы не портить оригинал в кэше
+    draw_frame = preview_frame.copy()
+    height, width = draw_frame.shape[:2]
+
+    # Берем значения ползунков напрямую из session_state (или текущие из базы)
+    p_x = st.session_state.get("line_position_x", current_pos_x)
+    w_w = st.session_state.get("line_width", current_width)
+    a_g = st.session_state.get("line_angle_v", current_angle)
+
+    # Математика линий (такая же, как в main.py)
+    angle_rad = math.radians(a_g)
+    tan_a = math.tan(angle_rad)
+    center_x = int(width * p_x)
+    half_height = height / 2
+    half_w_thick = (width * w_w) / 2
+
+    def get_x(y, offset):
+        return int(center_x + offset + (y - half_height) * tan_a)
+
+    # Строим полигон коридора
+    pts = np.array(
+        [
+            [get_x(0, -half_w_thick), 0],
+            [get_x(0, half_w_thick), 0],
+            [get_x(height, half_w_thick), height],
+            [get_x(height, -half_w_thick), height],
+        ],
+        np.int32,
+    )
+
+    # Накладываем полупрозрачную неоновую заливку зоны
+    overlay = draw_frame.copy()
+    cv2.fillPoly(overlay, [pts], (0, 255, 255))
+    cv2.addWeighted(overlay, 0.3, draw_frame, 0.7, 0, draw_frame)
+
+    # Рисуем четкие границы
+    cv2.line(
+        draw_frame,
+        (get_x(0, -half_w_thick), 0),
+        (get_x(height, -half_w_thick), height),
+        (0, 165, 255),
+        3,
+        cv2.LINE_AA,
+    )
+    cv2.line(
+        draw_frame,
+        (get_x(0, half_w_thick), 0),
+        (get_x(height, half_w_thick), height),
+        (0, 165, 255),
+        3,
+        cv2.LINE_AA,
+    )
+
+    # Конвертируем BGR в RGB для корректного отображения в браузере
+    draw_frame_rgb = cv2.cvtColor(draw_frame, cv2.COLOR_BGR2RGB)
+
+    # Выводим картинку в дашборд
+    st.image(
+        draw_frame_rgb,
+        caption="Желтая зона — коридор фиксации транзита. Люди должны пересекать его полностью (слева направо или справа налево).",
+        use_container_width=True,
+    )
+else:
+    st.warning(
+        "Файл `IMG_1686.MOV` не найден в корне проекта. Загрузите его, чтобы увидеть превью камеры."
+    )
+
+
+st.markdown("---")
+
+
+# --- ДАЛЬШЕ ИДЕТ ВАШ СТАНДАРТНЫЙ БЛОК ОТРИСОВКИ KPI И ГРАФИКОВ ---
 def load_data_from_db():
-    """Загрузка сырых данных из БД и превращение в DataFrame."""
     try:
         conn = sqlite3.connect(DB_PATH)
         query = "SELECT timestamp, track_id, direction FROM traffic"
         df_raw = pd.read_sql_query(query, conn)
         conn.close()
-
         if not df_raw.empty:
-            # Приводим к типу datetime для удобной группировки
             df_raw["timestamp"] = pd.to_datetime(df_raw["timestamp"])
         return df_raw
     except Exception as e:
@@ -53,15 +172,14 @@ def load_data_from_db():
         return pd.DataFrame()
 
 
-# Загружаем актуальные данные
 df = load_data_from_db()
 
 if df.empty:
     st.info(
-        "В базе данных пока нет записей о прохожих. Запустите `main.py`, чтобы собрать тестовый трафик!"
+        "В базе данных пока нет записей о прохожих. Настройте коридор выше и запустите `main.py`!"
     )
 else:
-    # --- ВЕРХНИЕ МЕТРИКИ (KPI) ---
+    # Метрики
     total_count = df["track_id"].nunique()
     in_count = df[df["direction"] == "IN"].shape[0]
     out_count = df[df["direction"] == "OUT"].shape[0]
@@ -70,45 +188,31 @@ else:
     with col1:
         st.metric("Всего прохожих", total_count)
     with col2:
-        st.metric("Идут К точке (IN)", in_count)
+        st.metric("Транзит ВЛЕВО (IN)", in_count)
     with col3:
-        st.metric("Идут ОТ точки (OUT)", out_count)
+        st.metric("Транзит ВПРАВО (OUT)", out_count)
     with col4:
-        # Средняя конверсия в стрит-фуде около 1-1.5% от проходящего мимо трафика
-        estimated_orders = int(in_count * 0.012)
-        st.metric("Прогноз заказов (конверсия 1.2%)", estimated_orders)
+        st.metric("Прогноз заказов (1.2%)", int(in_count * 0.012))
 
-    st.markdown("---")
-
-    # --- ПОДГОТОВКА ДАННЫХ ДЛЯ ГРАФИКОВ ---
+    # Графики
     df["Hour"] = df["timestamp"].dt.hour
-    df["Date"] = df["timestamp"].dt.date
-
-    # Группировка по часам для графика пиков
     hourly_traffic = (
         df.groupby(["Hour", "direction"]).size().reset_index(name="Количество людей")
     )
 
-    # --- ВИЗУАЛИЗАЦИЯ ---
     left_column, right_column = st.columns(2)
-
     with left_column:
-        st.subheader("🕒 Распределение трафика по часам (Пиковые зоны)")
+        st.subheader("🕒 Распределение по часам")
         fig_hourly = px.bar(
             hourly_traffic,
             x="Hour",
             y="Количество людей",
             color="direction",
             barmode="group",
-            labels={"Hour": "Час суток", "Количество людей": "Пешеходы"},
-            color_discrete_map={"IN": "#00CC96", "OUT": "#EF553B"},
         )
-        fig_hourly.update_layout(xaxis_type="category")
         st.plotly_chart(fig_hourly, use_container_width=True)
-
     with right_column:
-        st.subheader("📈 Интенсивность трафика во времени")
-        # Группируем по 15-минутным интервалам для плавной линии
+        st.subheader("📈 Интенсивность во времени")
         df_resampled = (
             df.set_index("timestamp")
             .resample("15Min")
@@ -116,17 +220,6 @@ else:
             .reset_index(name="Количество")
         )
         fig_line = px.line(
-            df_resampled,
-            x="timestamp",
-            y="Количество",
-            labels={"timestamp": "Время", "Количество": "Пешеходы за 15 мин"},
-            line_shape="spline",
+            df_resampled, x="timestamp", y="Количество", line_shape="spline"
         )
         st.plotly_chart(fig_line, use_container_width=True)
-
-    # --- ТАБЛИЦА С СЫРЫМИ ДАННЫМИ ---
-    st.subheader("📋 Последние зафиксированные прохожие")
-    st.dataframe(
-        df.sort_values(by="timestamp", ascending=False).head(50),
-        use_container_width=True,
-    )

@@ -7,7 +7,6 @@ def init_db():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
-    # Таблица для логов трафика
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS traffic (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -17,7 +16,6 @@ def init_db():
         )
     """)
 
-    # Таблица для динамических настроек (адаптивная линия)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
@@ -25,47 +23,46 @@ def init_db():
         )
     """)
 
-    # Задаем дефолтное значение для линии (0.6), если таблица пуста
+    # Инициализируем 3 плоскости управления
     cursor.execute(
         "INSERT OR IGNORE INTO settings (key, value) VALUES ('line_position', 0.6)"
     )
+    cursor.execute(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('line_thickness', 0.10)"
+    )
+    cursor.execute(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('line_angle', 0.0)"
+    )  # Новый параметр: угол 0° (горизонтально)
 
     conn.commit()
     conn.close()
 
 
 def log_pedestrian(track_id: int, direction: str):
-    """Запись пересечения линии пешеходом в БД."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-
-    # Используем встроенную функцию SQLite datetime('now', 'localtime')
     cursor.execute(
         "INSERT INTO traffic (timestamp, track_id, direction) VALUES (datetime('now', 'localtime'), ?, ?)",
         (track_id, direction),
     )
-
     conn.commit()
     conn.close()
 
 
-def get_line_position() -> float:
-    """Читает текущее положение линии из базы для main.py."""
+def get_setting(key: str, default: float) -> float:
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("SELECT value FROM settings WHERE key = 'line_position'")
+    cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
     row = cursor.fetchone()
     conn.close()
-    return row[0] if row else 0.6
+    return row[0] if row else default
 
 
-def update_line_position(value: float):
-    """Обновляет положение линии из дашборда Streamlit."""
+def update_setting(key: str, value: float):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT OR REPLACE INTO settings (key, value) VALUES ('line_position', ?)",
-        (value,),
+        "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value)
     )
     conn.commit()
     conn.close()
