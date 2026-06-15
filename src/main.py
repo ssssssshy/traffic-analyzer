@@ -5,7 +5,7 @@ from config import MODEL_PATH, LINE_POSITION_COEFF
 from database import log_pedestrian, init_db
 
 
-def run_analytics(video_source: str or int = 0):
+def run_analytics(video_source: str | int = 0):
     """
     Запуск аналитики трафика.
     video_source: путь к файлу mp4 или 0 для веб-камеры / смартфона по USB
@@ -17,7 +17,7 @@ def run_analytics(video_source: str or int = 0):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Используем устройство для инференса: {device}")
 
-    # Загружаем модель (она автоматически скачается в корень или weight при первом запуске)
+    # Загружаем модель (она автоматически скачается в weight при первом запуске)
     model = YOLO(MODEL_PATH).to(device)
 
     # Открываем источник видео
@@ -34,7 +34,6 @@ def run_analytics(video_source: str or int = 0):
     line_y = int(height * LINE_POSITION_COEFF)
 
     # Словари для отслеживания истории перемещения (чтобы понять направление)
-    # Ключ: track_id, Значение: предыдущий Y-центр объекта
     track_history = {}
     # Множество ID, которые мы уже посчитали (чтобы не дублировать)
     counted_ids = set()
@@ -44,71 +43,74 @@ def run_analytics(video_source: str or int = 0):
     while cap.isOpened():
         success, frame = cap.read()
         if not success:
-            print("Видеопоток завершен или потерян соединения.")
+            print("Видеопоток завершен или потеряно соединение.")
             break
 
         # Запускаем YOLO с трекером ByteTrack
-        # classes=[0] означает, что мы детектируем только людей (person)
         results = model.track(
             frame, persist=True, tracker="bytetrack.yaml", classes=[0], verbose=False
         )
 
-        # Проверяем, есть ли обнаруженные объекты с ID трекера
-        if results[0].boxes.id is not None:
-            boxes = results[0].boxes.xyxy.cpu().numpy()
-            track_ids = results[0].boxes.id.cpu().numpy().astype(int)
+        # Безопасно извлекаем объект boxes, проверяя его существование
+        if results and len(results) > 0:
+            boxes_object = results[0].boxes
 
-            for box, track_id in zip(boxes, track_ids):
-                x1, y1, x2, y2 = box
+            # Явная проверка для Pylance, что объект boxes и его id не равны None
+            if boxes_object is not None and boxes_object.id is not None:
+                # Используем # type: ignore, чтобы линтер не гадал, какие методы есть у внутренних объектов Ultralytics
+                boxes = boxes_object.xyxy.cpu().numpy()  # type: ignore
+                track_ids = boxes_object.id.cpu().numpy().astype(int)  # type: ignore
 
-                # Точка для детекции — «низ» объекта (ноги пешехода)
-                # Это точнее всего определяет, где человек стоит/идет относительно линии
-                cx = int((x1 + x2) / 2)
-                cy = int(y2)
+                for box, track_id in zip(boxes, track_ids):
+                    x1, y1, x2, y2 = box
 
-                # Рисуем рамку вокруг человека и его ID
-                cv2.rectangle(
-                    frame, (int(x1), int(y1)), (int(x2), int(int(y2))), (255, 0, 0), 2
-                )
-                cv2.putText(
-                    frame,
-                    f"ID: {track_id}",
-                    (int(x1), int(y1) - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    (255, 0, 0),
-                    2,
-                )
-                cv2.circle(frame, (cx, cy), 4, (0, 255, 0), -1)
+                    # Точка для детекции — «низ» объекта (ноги пешехода)
+                    cx = int((x1 + x2) / 2)
+                    cy = int(y2)
 
-                # Логика определения направления при пересечении линии
-                if track_id in track_history:
-                    prev_cy = track_history[track_id]
+                    # Рисуем рамку вокруг человека и его ID
+                    cv2.rectangle(
+                        frame, (int(x1), int(y1)), (int(x2), int(y2)), (255, 0, 0), 2
+                    )
+                    cv2.putText(
+                        frame,
+                        f"ID: {track_id}",
+                        (int(x1), int(y1) - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        (255, 0, 0),
+                        2,
+                    )
+                    cv2.circle(frame, (cx, cy), 4, (0, 255, 0), -1)
 
-                    # Вариант 1: Человек шел СВЕРХУ ВНИЗ и пересек линию
-                    if prev_cy < line_y <= cy and track_id not in counted_ids:
-                        counted_ids.add(track_id)
-                        log_pedestrian(track_id=track_id, direction="IN")
-                        print(
-                            f"[БД] Человек {track_id} зафиксирован: Идет К ТОЧКЕ (IN)"
-                        )
+                    # Логика определения направления при пересечении линии
+                    if track_id in track_history:
+                        prev_cy = track_history[track_id]
 
-                    # Вариант 2: Человек шел СНИЗУ ВВЕРХ и пересек линию
-                    elif prev_cy > line_y >= cy and track_id not in counted_ids:
-                        counted_ids.add(track_id)
-                        log_pedestrian(track_id=track_id, direction="OUT")
-                        print(
-                            f"[БД] Человек {track_id} зафиксирован: Идет ОТ ТОЧКИ (OUT)"
-                        )
+                        # Вариант 1: Человек шел СВЕРХУ ВНИЗ и пересек линию
+                        if prev_cy < line_y <= cy and track_id not in counted_ids:
+                            counted_ids.add(track_id)
+                            log_pedestrian(track_id=track_id, direction="IN")
+                            print(
+                                f"[БД] Человек {track_id} зафиксирован: Идет К ТОЧКЕ (IN)"
+                            )
 
-                # Обновляем историю позиции для этого ID
-                track_history[track_id] = cy
+                        # Вариант 2: Человек шел СНИЗУ ВВЕРХ и пересек линию
+                        elif prev_cy > line_y >= cy and track_id not in counted_ids:
+                            counted_ids.add(track_id)
+                            log_pedestrian(track_id=track_id, direction="OUT")
+                            print(
+                                f"[БД] Человек {track_id} зафиксирован: Идет ОТ ТОЧКИ (OUT)"
+                            )
+
+                    # Обновляем историю позиции для этого ID
+                    track_history[track_id] = cy
 
         # Рисуем виртуальную линию (красная)
         cv2.line(frame, (0, line_y), (width, line_y), (0, 0, 255), 3)
         cv2.putText(
             frame,
-            "ЛИНИЯ ПОДСЧЕТА",
+            "LINIYA PODSCHETA",
             (20, line_y - 10),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.7,
@@ -119,7 +121,7 @@ def run_analytics(video_source: str or int = 0):
         # Выводим текущее количество уникальных прохожих на экран
         cv2.putText(
             frame,
-            f"Всего в базе: {len(counted_ids)}",
+            f"Vsego v baze: {len(counted_ids)}",
             (20, 40),
             cv2.FONT_HERSHEY_SIMPLEX,
             1,
@@ -139,7 +141,4 @@ def run_analytics(video_source: str or int = 0):
 
 
 if __name__ == "__main__":
-    # Для теста подставьте сюда путь к вашему видеофайлу в папке data,
-    # например: run_analytics("data/test_street.mp4")
-    # Если хотите потестить на веб-камере ноутбука — оставьте 0.
     run_analytics(0)
