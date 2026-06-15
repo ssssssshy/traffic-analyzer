@@ -31,3 +31,6 @@ data/*.avi
 .idea/
 .DS_Store
 *.env
+
+GEMINI.md
+
