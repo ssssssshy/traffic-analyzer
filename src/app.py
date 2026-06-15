@@ -2,11 +2,11 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 import plotly.express as px
+from config import DB_PATH, DATA_DIR
 import cv2
 import numpy as np
 import math
 from database import get_setting, update_setting
-from config import DB_PATH
 
 # Настройка страницы Streamlit
 st.set_page_config(page_title="Shawarma Traffic Analytics", layout="wide")
@@ -36,7 +36,7 @@ st.sidebar.slider(
     min_value=0.1,
     max_value=0.9,
     value=float(current_pos_x),
-    step=0.02,  # Сделали шаг меньше для плавной настройки
+    step=0.02,
     key="line_position_x",
     on_change=on_setting_change,
     args=("line_position_x",),
@@ -66,15 +66,32 @@ st.sidebar.slider(
     args=("line_angle_v",),
 )
 
+st.sidebar.markdown("---")
+st.sidebar.header("➕ Ручное добавление")
+col_manual1, col_manual2 = st.sidebar.columns(2)
+with col_manual1:
+    if st.button("➕ ВЛЕВО (IN)"):
+        from database import log_pedestrian
+        log_pedestrian(track_id=0, direction="IN")
+        st.toast("Добавлен проход ВЛЕВО (IN)")
+        st.rerun()
+with col_manual2:
+    if st.button("➕ ВПРАВО (OUT)"):
+        from database import log_pedestrian
+        log_pedestrian(track_id=0, direction="OUT")
+        st.toast("Добавлен проход ВПРАВО (OUT)")
+        st.rerun()
+
 
 # --- ВЕРХНЯЯ ЗОНА: ИНТЕРАКТИВНЫЙ ОТЛАДЧИК ЛИНИИ ---
 st.subheader("👁️ Настройка геометрии кадра в реальном времени")
 
 
 @st.cache_data(show_spinner=False)
-def get_preview_frame(video_path="IMG_1686.MOV"):
-    """Загружает ровно один первый кадр видео для превью, чтобы не нагружать память."""
-    cap = cv2.VideoCapture(video_path)
+def get_preview_frame(video_filename="IMG_1686.MOV"):
+    """Загружает ровно один первый кадр видео для превью из папки data."""
+    video_path = DATA_DIR / video_filename
+    cap = cv2.VideoCapture(str(video_path))
     success, frame = cap.read()
     cap.release()
     if success:
@@ -223,3 +240,9 @@ else:
             df_resampled, x="timestamp", y="Количество", line_shape="spline"
         )
         st.plotly_chart(fig_line, use_container_width=True)
+
+    st.subheader("📋 Последние добавленные прохожие")
+    st.dataframe(
+        df.sort_values(by="timestamp", ascending=False).head(20),
+        use_container_width=True,
+    )

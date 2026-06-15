@@ -23,16 +23,16 @@ def init_db():
         )
     """)
 
-    # Инициализируем 3 плоскости управления
+    # Инициализируем параметры управления коридором
     cursor.execute(
-        "INSERT OR IGNORE INTO settings (key, value) VALUES ('line_position', 0.6)"
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('line_position_x', 0.5)"
     )
     cursor.execute(
-        "INSERT OR IGNORE INTO settings (key, value) VALUES ('line_thickness', 0.10)"
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('line_width', 0.15)"
     )
     cursor.execute(
-        "INSERT OR IGNORE INTO settings (key, value) VALUES ('line_angle', 0.0)"
-    )  # Новый параметр: угол 0° (горизонтально)
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('line_angle_v', 0.0)"
+    )
 
     conn.commit()
     conn.close()
